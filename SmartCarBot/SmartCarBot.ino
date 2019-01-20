@@ -2,223 +2,366 @@
 
 #include "IRremote.h"
 
-#define f 16736925  // FORWARD
-#define b 16754775  // BACK
-#define l 16720605  // LEFT
-#define r 16761405  // RIGHT
-#define s 16712445  // STOP
-#define KEY1 16738455 //Line Teacking mode
-#define KEY2 16750695 //Obstacles Avoidance mode
-#define KEY3 16756815
-#define KEY4 16724175
-#define KEY5 16718055
-#define KEY6 16743045
-#define KEY7 16716015
-#define KEY8 16726215
-#define KEY9 16734885
-#define KEY0 16730805
-#define KEY_STAR 16728765
-#define KEY_HASH 16732845
+#define DEBUG
 
-#define RECV_PIN  12
-#define ECHO_PIN  A4  
-#define TRIG_PIN  A5 
-#define ENA 5
-#define ENB 6
-#define IN1 7
-#define IN2 8
-#define IN3 9
-#define IN4 11
-#define LED_Pin 13
+#ifdef DEBUG
+    #define LOG(string)       Serial.print(string)
+    #define LOG_LINE(string)  Serial.println(string)
+#else
+    #define LOG(X)       
+    #define LOG_LINE(X)  
+#endif
+
+#define BTN_FORWARD  16736925
+#define BTN_BACKWARD 16754775
+#define BTN_LEFT     16720605
+#define BTN_RIGHT    16761405
+#define BTN_STOP     16712445
+#define BTN_1        16738455 // Line tracking mode
+#define BTN_2        16750695 // Obstacles avoidance mode
+#define BTN_3        16756815
+#define BTN_4        16724175
+#define BTN_5        16718055
+#define BTN_6        16743045
+#define BTN_7        16716015
+#define BTN_8        16726215
+#define BTN_9        16734885
+#define BTN_0        16730805
+#define BTN_STAR     16728765
+#define BTN_HASH     16732845
+
+#define RECV_PIN 12
+#define LED_PIN  13
+#define ECHO_PIN A4  
+#define TRIG_PIN A5 
+
+#define LEFT_MOTORS_VCC 11
+#define LEFT_MOTORS_GND  9
+
+#define RIGHT_MOTORS_VCC 7
+#define RIGHT_MOTORS_GND 8
+
+#define LEFT_MOTORS_POWER  5
+#define RIGHT_MOTORS_POWER 6
+
 #define LineTeacking_Pin_Right  10
 #define LineTeacking_Pin_Middle 4
 #define LineTeacking_Pin_Left   2
 #define LineTeacking_Read_Right   !digitalRead(10)
 #define LineTeacking_Read_Middle  !digitalRead(4)
 #define LineTeacking_Read_Left    !digitalRead(2)
-#define carSpeed 250
 
-Servo servo;
-IRrecv irrecv(RECV_PIN);
-decode_results results;
-unsigned long IR_PreMillis;
-unsigned long LT_PreMillis;
-int rightDistance = 0, leftDistance = 0, middleDistance = 0;
+#define DEFAULT_CAR_SPEED 250
 
-enum FUNCTIONMODE{
+Servo         servo;
+IRrecv        irRecv(RECV_PIN);
+unsigned long irPreMillis;
+unsigned long ltPreMillis;
+
+enum MODE
+{
   IDLE,
-  LineTeacking,
-  ObstaclesAvoidance,
-  Bluetooth,
-  IRremote
-} func_mode = IDLE;
+  LINE_TRACKING,
+  OBSTACLES_AVOIDANCE,
+  BT_CONTROL,
+  IR_CONTROL
+} mainMode = IDLE, oldMainMode = IDLE;
 
-enum MOTIONMODE {
+enum DIRECTION
+{
   STOP,
   FORWARD,
-  BACK,
-  LEFT,
-  RIGHT
-} mov_mode = STOP;
+  BACKWARD,
+  TURN_LEFT,
+  TURN_RIGHT
+} direction = STOP, oldDirection = STOP;
 
-void delays(unsigned long t) {
-  for(unsigned long i = 0; i < t; i++) {
-    getBTData();
-    getIRData();
+void delays(unsigned long t)
+{
+  for(unsigned long i = 0; i < t; i++)
+  {
+    getBtData();
+    getIrData();
     delay(1);
   }
 }
 
-int getDistance() {
+int getDistance()
+{
+  int distance;
+
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
+ 
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
+ 
   digitalWrite(TRIG_PIN, LOW);
-  return (int)pulseIn(ECHO_PIN, HIGH) / 58;
+ 
+  distance = (int)pulseIn(ECHO_PIN, HIGH) / 58;
+
+  LOG("Distance: ");
+  LOG(distance);
+
+  return distance;
 }
 
-void forward(bool debug = false){ 
-  analogWrite(ENA, carSpeed);
-  analogWrite(ENB, carSpeed);
-  digitalWrite(IN1,HIGH);
-  digitalWrite(IN2,LOW);
-  digitalWrite(IN3,LOW);
-  digitalWrite(IN4,HIGH);
-  if(debug) Serial.println("Go forward!");
+void goForward(void)
+{ 
+  analogWrite(LEFT_MOTORS_POWER , DEFAULT_CAR_SPEED);
+  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+
+  digitalWrite(LEFT_MOTORS_VCC, HIGH);
+  digitalWrite(LEFT_MOTORS_GND, LOW );
+
+  digitalWrite(RIGHT_MOTORS_VCC, HIGH);
+  digitalWrite(RIGHT_MOTORS_GND, LOW);
+
+  LOG_LINE("Going forward");
 }
 
-void back(bool debug = false){
-  analogWrite(ENA, carSpeed);
-  analogWrite(ENB, carSpeed);
-  digitalWrite(IN1,LOW);
-  digitalWrite(IN2,HIGH);
-  digitalWrite(IN3,HIGH);
-  digitalWrite(IN4,LOW);
-  if(debug) Serial.println("Go back!");
+void goBackward(void)
+{
+  analogWrite(LEFT_MOTORS_POWER , DEFAULT_CAR_SPEED);
+  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+
+  digitalWrite(LEFT_MOTORS_VCC, LOW );
+  digitalWrite(LEFT_MOTORS_GND, HIGH);
+
+  digitalWrite(RIGHT_MOTORS_VCC, LOW );
+  digitalWrite(RIGHT_MOTORS_GND, HIGH);
+
+  LOG_LINE("Going backward");
 }
 
-void left(bool debug = false){
-  analogWrite(ENA,carSpeed);
-  analogWrite(ENB,carSpeed);
-  digitalWrite(IN1,LOW);
-  digitalWrite(IN2,HIGH);
-  digitalWrite(IN3,LOW);
-  digitalWrite(IN4,HIGH); 
-  if(debug) Serial.println("Go left!");
+void turnLeft(void)
+{
+  analogWrite(LEFT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+
+  digitalWrite(LEFT_MOTORS_VCC, HIGH); 
+  digitalWrite(LEFT_MOTORS_GND, LOW );
+
+  digitalWrite(RIGHT_MOTORS_VCC, LOW );
+  digitalWrite(RIGHT_MOTORS_GND, HIGH);
+ 
+  LOG_LINE("Turning left");
 }
 
-void right(bool debug = false){
-  analogWrite(ENA,carSpeed);
-  analogWrite(ENB,carSpeed);
-  digitalWrite(IN1,HIGH);
-  digitalWrite(IN2,LOW);
-  digitalWrite(IN3,HIGH);
-  digitalWrite(IN4,LOW);
-  if(debug) Serial.println("Go right!");
+void turnRight(void)
+{
+  analogWrite(LEFT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+
+  digitalWrite(LEFT_MOTORS_VCC, LOW );
+  digitalWrite(LEFT_MOTORS_GND, HIGH);
+
+  digitalWrite(RIGHT_MOTORS_VCC, HIGH);
+  digitalWrite(RIGHT_MOTORS_GND, LOW );
+ 
+  LOG_LINE("Turning right");
 }
 
-void stop(bool debug = false){
-  digitalWrite(ENA, LOW);
-  digitalWrite(ENB, LOW);
-  if(debug) Serial.println("Stop!");
+void stop(void)
+{
+  digitalWrite(LEFT_MOTORS_POWER , LOW);
+  digitalWrite(RIGHT_MOTORS_POWER, LOW);
+ 
+  LOG_LINE("Stop");
 }
 
-void getBTData() {
-  if(Serial.available()) {
-    switch(Serial.read()) {
-      case 'f': func_mode = Bluetooth; mov_mode = FORWARD;  break;
-      case 'b': func_mode = Bluetooth; mov_mode = BACK;     break;
-      case 'l': func_mode = Bluetooth; mov_mode = LEFT;     break;
-      case 'r': func_mode = Bluetooth; mov_mode = RIGHT;    break;
-      case 's': func_mode = Bluetooth; mov_mode = STOP;     break;
-      case '1': func_mode = LineTeacking;                   break;
-      case '2': func_mode = ObstaclesAvoidance;             break;
-      default:  break;
+void getBtData()
+{
+  if (Serial.available() == true)
+  {
+    switch (Serial.read())
+    {
+      case 'f':
+        mainMode  = BT_CONTROL;
+        direction = FORWARD;
+        break;
+      case 'b':
+        mainMode  = BT_CONTROL;
+        direction = BACKWARD;     
+        break;
+      case 'l': 
+        mainMode  = BT_CONTROL; 
+        direction = TURN_LEFT;     
+        break;
+      case 'r': 
+        mainMode  = BT_CONTROL; 
+        direction = TURN_RIGHT;
+        break;
+      case 's':
+        mainMode  = BT_CONTROL;
+        direction = STOP;
+        break;
+      case '1':
+        mainMode = LINE_TRACKING;
+        break;
+      case '2':
+        mainMode = OBSTACLES_AVOIDANCE;
+        break;
+      default:
+        break;
     } 
   }
 }
 
-void getIRData() {
-  if (irrecv.decode(&results)){ 
-    IR_PreMillis = millis();
-    switch(results.value){
-      case f:   func_mode = IRremote; mov_mode = FORWARD;  break;
-      case b:   func_mode = IRremote; mov_mode = BACK;     break;
-      case l:   func_mode = IRremote; mov_mode = LEFT;     break;
-      case r:   func_mode = IRremote; mov_mode = RIGHT;    break;
-      case s:   func_mode = IRremote; mov_mode = STOP;     break;
-      case KEY1:  func_mode = LineTeacking;                break;
-      case KEY2:  func_mode = ObstaclesAvoidance;          break;
-      default: break;
+void getIrData(void)
+{
+  decode_results results;
+
+  if (irRecv.decode(&results) == true)
+  { 
+    irPreMillis = millis();
+
+    switch (results.value)
+    {
+      case BTN_FORWARD:
+        mainMode  = IR_CONTROL;
+        direction = FORWARD; 
+        break;
+      case BTN_BACKWARD:
+        mainMode  = IR_CONTROL;
+        direction = BACKWARD;     
+        break;
+      case BTN_LEFT:
+        mainMode  = IR_CONTROL;
+        direction = TURN_LEFT;     
+        break;
+      case BTN_RIGHT:   
+        mainMode  = IR_CONTROL;
+        direction = TURN_RIGHT;   
+        break;
+      case BTN_STOP:
+        mainMode  = IR_CONTROL;
+        direction = STOP;    
+        break;
+      case BTN_1:  
+        mainMode = LINE_TRACKING;                
+        break;
+      case BTN_2:
+        mainMode = OBSTACLES_AVOIDANCE;          
+        break;
+      default:
+        break;
     }
-    irrecv.resume();
+    irRecv.resume();
   }
 }
 
-void bluetooth_mode() {
-  if(func_mode == Bluetooth){
-    switch(mov_mode){
-      case FORWARD: forward();  break;
-      case BACK:    back();     break;
-      case LEFT:    left();     break;
-      case RIGHT:   right();    break;
-      case STOP:    stop();     break;
-      default: break;
+void doBtControl() 
+{
+  if (mainMode == BT_CONTROL)
+  {
+    switch (direction)
+    {
+      case FORWARD:
+        goForward();
+        break;
+      case BACKWARD:
+        goBackward();
+        break;
+      case TURN_LEFT:
+        turnLeft();
+        break;
+      case TURN_RIGHT:
+        turnRight();
+        break;
+      case STOP:
+        stop();
+        break;
+      default:
+        break;
     }
   }
 }
 
-void irremote_mode() {
-  if(func_mode == IRremote){
-    switch(mov_mode){
-      case FORWARD: forward();  break;
-      case BACK:    back();     break;
-      case LEFT:    left();     break;
-      case RIGHT:   right();    break;
-      case STOP:    stop();     break;
-      default: break;
+void doIrControl() 
+{
+  if (mainMode == IR_CONTROL)
+  {
+    switch (direction)
+    {
+      case FORWARD:
+        goForward();
+        break;
+      case BACKWARD:
+        goBackward();
+        break;
+      case TURN_LEFT:
+        turnLeft();
+        break;
+      case TURN_RIGHT:
+        turnRight();
+        break;
+      case STOP:
+        stop();
+        break;
+      default:
+        break;
     }
-    if(millis() - IR_PreMillis > 500){
-      mov_mode = STOP;
-      IR_PreMillis = millis();
+    if (millis() - irPreMillis > 500)
+    {
+      direction   = STOP;
+      irPreMillis = millis();
     }
   }   
 }
 
-void line_teacking_mode() {
-  if(func_mode == LineTeacking){
-    if(LineTeacking_Read_Middle){
-      forward();
-      LT_PreMillis = millis();
-    } else if(LineTeacking_Read_Right) { 
-      right();
-      while(LineTeacking_Read_Right) {
-        getBTData();
-        getIRData();
+void doLineTracking() 
+{
+  if (mainMode == LINE_TRACKING)
+  {
+    if (LineTeacking_Read_Middle)
+    {
+      goForward();
+      ltPreMillis = millis();
+    }
+    else if (LineTeacking_Read_Right)
+    { 
+      turnRight();
+      while (LineTeacking_Read_Right)
+      {
+        getBtData();
+        getIrData();
       }
-      LT_PreMillis = millis();
-    } else if(LineTeacking_Read_Left) {
-      left();
-      while(LineTeacking_Read_Left) {
-        getBTData();
-        getIRData();
+      ltPreMillis = millis();
+    }
+    else if (LineTeacking_Read_Left)
+    {
+      turnLeft();
+      while(LineTeacking_Read_Left)
+      {
+        getBtData();
+        getIrData();
       }
-      LT_PreMillis = millis();
-    } else {
-      if(millis() - LT_PreMillis > 150){
+      ltPreMillis = millis();
+    }
+    else
+    {
+      if (millis() - ltPreMillis > 150)
+      {
         stop();
       }
     }
   }  
 }
 
-void obstacles_avoidance_mode() {
-  if(func_mode == ObstaclesAvoidance){
+void doObstaclesAvoidance()
+{
+  int rightDistance  = 0;
+  int leftDistance   = 0;
+  int middleDistance = 0;
+  
+  if (mainMode == OBSTACLES_AVOIDANCE)
+  {
     servo.write(90);
     delays(500);
     middleDistance = getDistance();
-    if(middleDistance <= 40) {
+    if (middleDistance <= 40)
+    {
       stop();
       delays(500);
       servo.write(10);
@@ -235,47 +378,120 @@ void obstacles_avoidance_mode() {
       delays(500);
       servo.write(90);
       delays(1000);
-      if(rightDistance > leftDistance) {
-        right();
+      if (rightDistance > leftDistance)
+      {
+        turnRight();
         delays(360);
-      } else if(rightDistance < leftDistance) {
-        left();
-        delays(360);
-      } else if((rightDistance <= 40) || (leftDistance <= 40)) {
-        back();
-        delays(180);
-      } else {
-        forward();
       }
-    } else {
-        forward();
+      else if (rightDistance < leftDistance)
+      {
+        turnLeft();
+        delays(360);
+      }
+      else if ((rightDistance <= 40) || (leftDistance <= 40))
+      {
+        goBackward();
+        delays(180);
+      }
+      else
+      {
+        goForward();
+      }
+    }
+    else
+    {
+        goForward();
     }  
   }  
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(9600);
-  servo.attach(3,500,2400);// 500: 0 degree  2400: 180 degree
+  servo.attach(3, 500, 2400);// 500: 0 degree  2400: 180 degree
   servo.write(90);
-  irrecv.enableIRIn();
+  irRecv.enableIRIn();
+  
   pinMode(ECHO_PIN, INPUT);
   pinMode(TRIG_PIN, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(ENA, OUTPUT);
-  pinMode(ENB, OUTPUT);
-  pinMode(LineTeacking_Pin_Right, INPUT);
+
+  pinMode(LEFT_MOTORS_VCC, OUTPUT);
+  pinMode(LEFT_MOTORS_GND, OUTPUT);
+
+  pinMode(RIGHT_MOTORS_VCC, OUTPUT);
+  pinMode(RIGHT_MOTORS_GND, OUTPUT);
+
+  pinMode(LEFT_MOTORS_POWER , OUTPUT);
+  pinMode(RIGHT_MOTORS_POWER, OUTPUT);
+
+  pinMode(LineTeacking_Pin_Right , INPUT);
   pinMode(LineTeacking_Pin_Middle, INPUT);
-  pinMode(LineTeacking_Pin_Left, INPUT);
+  pinMode(LineTeacking_Pin_Left  , INPUT);
 }
 
-void loop() {
-  getBTData();
-  getIRData();
-  bluetooth_mode();
-  irremote_mode();
-  line_teacking_mode();
-  obstacles_avoidance_mode();
+void loop()
+{
+  getBtData();
+  getIrData();
+
+  if (mainMode != oldMainMode)
+  {
+    LOG("Mode: ");
+
+    switch (mainMode)
+    {
+      case IDLE:
+        LOG_LINE("IDLE");
+        break;
+      case LINE_TRACKING:
+        LOG_LINE("LINE_TRACKING");
+        break;
+      case OBSTACLES_AVOIDANCE:
+        LOG_LINE("OBSTACLES_AVOIDANCE");
+        break;
+      case BT_CONTROL:
+        LOG_LINE("BT_CONTROL");
+        break;
+      case IR_CONTROL:
+        LOG_LINE("IR_CONTROL");
+        break;
+      default:
+        break;
+    }
+
+    oldMainMode = mainMode;
+  }
+
+  if (direction != oldDirection)
+  {
+    LOG("Direction: ");
+
+    switch (direction)
+    {
+      case STOP:
+        LOG_LINE("STOP");
+        break;
+      case FORWARD:
+        LOG_LINE("FORWARD");
+        break;
+      case BACKWARD:
+        LOG_LINE("BACKWARD");
+        break;
+      case TURN_LEFT:
+        LOG_LINE("TURN_LEFT");
+        break;
+      case TURN_RIGHT:
+        LOG_LINE("TURN_RIGHT");
+        break;
+      default:
+        break;
+    }
+
+    oldDirection = direction;
+  }
+
+  doBtControl();
+  doIrControl();
+  doLineTracking();
+  doObstaclesAvoidance();
 }
