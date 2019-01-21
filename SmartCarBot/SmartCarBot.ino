@@ -44,28 +44,22 @@
 #define LEFT_MOTORS_POWER  5
 #define RIGHT_MOTORS_POWER 6
 
-#define LineTeacking_Pin_Right  10
-#define LineTeacking_Pin_Middle 4
-#define LineTeacking_Pin_Left   2
-#define LineTeacking_Read_Right   !digitalRead(10)
-#define LineTeacking_Read_Middle  !digitalRead(4)
-#define LineTeacking_Read_Left    !digitalRead(2)
-
 #define DEFAULT_CAR_SPEED 250
 
-Servo         servo;
-IRrecv        irRecv(RECV_PIN);
-unsigned long irPreMillis;
-unsigned long ltPreMillis;
+#define LINE_TRACKING_LEFT_PIN    2
+#define LINE_TRACKING_MIDDLE_PIN  4
+#define LINE_TRACKING_RIGHT_PIN  10
+
+Servo  servo;
+IRrecv irRecv(RECV_PIN);
 
 enum MODE
 {
-  IDLE,
   LINE_TRACKING,
   OBSTACLES_AVOIDANCE,
   BT_CONTROL,
   IR_CONTROL
-} mainMode = IDLE, oldMainMode = IDLE;
+} mainMode = IR_CONTROL, oldMainMode = IR_CONTROL;
 
 enum DIRECTION
 {
@@ -86,7 +80,7 @@ void delays(unsigned long t)
   }
 }
 
-int getDistance()
+int getDistance(void)
 {
   int distance;
 
@@ -101,7 +95,7 @@ int getDistance()
   distance = (int)pulseIn(ECHO_PIN, HIGH) / 58;
 
   LOG("Distance: ");
-  LOG(distance);
+  LOG_LINE(distance);
 
   return distance;
 }
@@ -212,10 +206,8 @@ void getIrData(void)
 {
   decode_results results;
 
-  if (irRecv.decode(&results) == true)
+  if (irRecv.decode(&results) != 0)
   { 
-    irPreMillis = millis();
-
     switch (results.value)
     {
       case BTN_FORWARD:
@@ -251,7 +243,7 @@ void getIrData(void)
   }
 }
 
-void doBtControl() 
+void doBtControl(void) 
 {
   if (mainMode == BT_CONTROL)
   {
@@ -278,7 +270,7 @@ void doBtControl()
   }
 }
 
-void doIrControl() 
+void doIrControl(void) 
 {
   if (mainMode == IR_CONTROL)
   {
@@ -292,9 +284,13 @@ void doIrControl()
         break;
       case TURN_LEFT:
         turnLeft();
+        delay(500);
+        stop();
         break;
       case TURN_RIGHT:
         turnRight();
+        delay(500);
+        stop();
         break;
       case STOP:
         stop();
@@ -302,54 +298,41 @@ void doIrControl()
       default:
         break;
     }
-    if (millis() - irPreMillis > 500)
-    {
-      direction   = STOP;
-      irPreMillis = millis();
-    }
   }   
 }
 
-void doLineTracking() 
-{
+void doLineTracking(void) 
+{ 
   if (mainMode == LINE_TRACKING)
   {
-    if (LineTeacking_Read_Middle)
+    if (digitalRead(LINE_TRACKING_MIDDLE_PIN) == LOW)
     {
       goForward();
-      ltPreMillis = millis();
     }
-    else if (LineTeacking_Read_Right)
+    else if (digitalRead(LINE_TRACKING_RIGHT_PIN) == LOW)
     { 
       turnRight();
-      while (LineTeacking_Read_Right)
+      while (digitalRead(LINE_TRACKING_RIGHT_PIN) == LOW)
       {
-        getBtData();
-        getIrData();
+        ; // Nothing to do
       }
-      ltPreMillis = millis();
     }
-    else if (LineTeacking_Read_Left)
+    else if (digitalRead(LINE_TRACKING_LEFT_PIN) == LOW)
     {
       turnLeft();
-      while(LineTeacking_Read_Left)
+      while (digitalRead(LINE_TRACKING_LEFT_PIN) == LOW)
       {
-        getBtData();
-        getIrData();
+        ; // Nothing to do
       }
-      ltPreMillis = millis();
     }
     else
     {
-      if (millis() - ltPreMillis > 150)
-      {
-        stop();
-      }
+      stop();
     }
   }  
 }
 
-void doObstaclesAvoidance()
+void doObstaclesAvoidance(void)
 {
   int rightDistance  = 0;
   int leftDistance   = 0;
@@ -405,11 +388,13 @@ void doObstaclesAvoidance()
   }  
 }
 
-void setup()
+void setup(void)
 {
   Serial.begin(9600);
+ 
   servo.attach(3, 500, 2400);// 500: 0 degree  2400: 180 degree
   servo.write(90);
+ 
   irRecv.enableIRIn();
   
   pinMode(ECHO_PIN, INPUT);
@@ -424,25 +409,24 @@ void setup()
   pinMode(LEFT_MOTORS_POWER , OUTPUT);
   pinMode(RIGHT_MOTORS_POWER, OUTPUT);
 
-  pinMode(LineTeacking_Pin_Right , INPUT);
-  pinMode(LineTeacking_Pin_Middle, INPUT);
-  pinMode(LineTeacking_Pin_Left  , INPUT);
+  pinMode(LINE_TRACKING_RIGHT_PIN , INPUT);
+  pinMode(LINE_TRACKING_MIDDLE_PIN, INPUT);
+  pinMode(LINE_TRACKING_LEFT_PIN  , INPUT);
 }
 
-void loop()
+void loop(void)
 {
   getBtData();
   getIrData();
 
   if (mainMode != oldMainMode)
   {
-    LOG("Mode: ");
+    stop();
+    
+    LOG("Mode     : ");
 
     switch (mainMode)
     {
-      case IDLE:
-        LOG_LINE("IDLE");
-        break;
       case LINE_TRACKING:
         LOG_LINE("LINE_TRACKING");
         break;
@@ -455,7 +439,7 @@ void loop()
       case IR_CONTROL:
         LOG_LINE("IR_CONTROL");
         break;
-      default:
+      default: 
         break;
     }
 
@@ -464,6 +448,8 @@ void loop()
 
   if (direction != oldDirection)
   {
+    stop();
+
     LOG("Direction: ");
 
     switch (direction)
@@ -488,10 +474,11 @@ void loop()
     }
 
     oldDirection = direction;
+
+    doBtControl();
+    doIrControl();
   }
 
-  doBtControl();
-  doIrControl();
   doLineTracking();
   doObstaclesAvoidance();
 }
