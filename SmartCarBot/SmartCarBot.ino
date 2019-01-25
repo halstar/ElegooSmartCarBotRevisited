@@ -2,7 +2,7 @@
 
 #include "IRremote.h"
 
-#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
     #define LOG(string)       Serial.print(string)
@@ -45,6 +45,7 @@
 #define RIGHT_MOTORS_POWER 6
 
 #define DEFAULT_CAR_SPEED 250
+#define LOW_CAR_SPEED     200
 
 #define LINE_TRACKING_LEFT_PIN    2
 #define LINE_TRACKING_MIDDLE_PIN  4
@@ -94,16 +95,16 @@ int getDistance(void)
  
   distance = (int)pulseIn(ECHO_PIN, HIGH) / 58;
 
-  LOG("Distance: ");
+  LOG("Distance : ");
   LOG_LINE(distance);
 
   return distance;
 }
 
-void goForward(void)
+void goForward(unsigned int carSpeed)
 { 
-  analogWrite(LEFT_MOTORS_POWER , DEFAULT_CAR_SPEED);
-  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(LEFT_MOTORS_POWER , carSpeed);
+  analogWrite(RIGHT_MOTORS_POWER, carSpeed);
 
   digitalWrite(LEFT_MOTORS_VCC, HIGH);
   digitalWrite(LEFT_MOTORS_GND, LOW );
@@ -114,10 +115,10 @@ void goForward(void)
   LOG_LINE("Going forward");
 }
 
-void goBackward(void)
+void goBackward(unsigned int carSpeed)
 {
-  analogWrite(LEFT_MOTORS_POWER , DEFAULT_CAR_SPEED);
-  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(LEFT_MOTORS_POWER , carSpeed);
+  analogWrite(RIGHT_MOTORS_POWER, carSpeed);
 
   digitalWrite(LEFT_MOTORS_VCC, LOW );
   digitalWrite(LEFT_MOTORS_GND, HIGH);
@@ -128,10 +129,10 @@ void goBackward(void)
   LOG_LINE("Going backward");
 }
 
-void turnLeft(void)
+void turnLeft(unsigned int carSpeed)
 {
-  analogWrite(LEFT_MOTORS_POWER, DEFAULT_CAR_SPEED);
-  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(LEFT_MOTORS_POWER , carSpeed);
+  analogWrite(RIGHT_MOTORS_POWER, carSpeed);
 
   digitalWrite(LEFT_MOTORS_VCC, HIGH); 
   digitalWrite(LEFT_MOTORS_GND, LOW );
@@ -142,10 +143,10 @@ void turnLeft(void)
   LOG_LINE("Turning left");
 }
 
-void turnRight(void)
+void turnRight(unsigned int carSpeed)
 {
-  analogWrite(LEFT_MOTORS_POWER, DEFAULT_CAR_SPEED);
-  analogWrite(RIGHT_MOTORS_POWER, DEFAULT_CAR_SPEED);
+  analogWrite(LEFT_MOTORS_POWER , carSpeed);
+  analogWrite(RIGHT_MOTORS_POWER, carSpeed);
 
   digitalWrite(LEFT_MOTORS_VCC, LOW );
   digitalWrite(LEFT_MOTORS_GND, HIGH);
@@ -250,16 +251,16 @@ void doBtControl(void)
     switch (direction)
     {
       case FORWARD:
-        goForward();
+        goForward(DEFAULT_CAR_SPEED);
         break;
       case BACKWARD:
-        goBackward();
+        goBackward(DEFAULT_CAR_SPEED);
         break;
       case TURN_LEFT:
-        turnLeft();
+        turnLeft(DEFAULT_CAR_SPEED);
         break;
       case TURN_RIGHT:
-        turnRight();
+        turnRight(DEFAULT_CAR_SPEED);
         break;
       case STOP:
         stop();
@@ -277,18 +278,18 @@ void doIrControl(void)
     switch (direction)
     {
       case FORWARD:
-        goForward();
+        goForward(DEFAULT_CAR_SPEED);
         break;
       case BACKWARD:
-        goBackward();
+        goBackward(DEFAULT_CAR_SPEED);
         break;
       case TURN_LEFT:
-        turnLeft();
+        turnLeft(DEFAULT_CAR_SPEED);
         delay(500);
         stop();
         break;
       case TURN_RIGHT:
-        turnRight();
+        turnRight(DEFAULT_CAR_SPEED);
         delay(500);
         stop();
         break;
@@ -307,11 +308,12 @@ void doLineTracking(void)
   {
     if (digitalRead(LINE_TRACKING_MIDDLE_PIN) == LOW)
     {
-      goForward();
+      goForward(DEFAULT_CAR_SPEED);
     }
     else if (digitalRead(LINE_TRACKING_RIGHT_PIN) == LOW)
     { 
-      turnRight();
+      turnRight(DEFAULT_CAR_SPEED);
+
       while (digitalRead(LINE_TRACKING_RIGHT_PIN) == LOW)
       {
         ; // Nothing to do
@@ -319,7 +321,8 @@ void doLineTracking(void)
     }
     else if (digitalRead(LINE_TRACKING_LEFT_PIN) == LOW)
     {
-      turnLeft();
+      turnLeft(DEFAULT_CAR_SPEED);
+
       while (digitalRead(LINE_TRACKING_LEFT_PIN) == LOW)
       {
         ; // Nothing to do
@@ -332,60 +335,42 @@ void doLineTracking(void)
   }  
 }
 
-void doObstaclesAvoidance(void)
+void doObstaclesAvoidance()
 {
-  int rightDistance  = 0;
-  int leftDistance   = 0;
-  int middleDistance = 0;
-  
+  int obstacleDistance;
+
   if (mainMode == OBSTACLES_AVOIDANCE)
   {
-    servo.write(90);
-    delays(500);
-    middleDistance = getDistance();
-    if (middleDistance <= 40)
+    obstacleDistance = getDistance();
+
+    if (obstacleDistance < 0)
     {
       stop();
-      delays(500);
-      servo.write(10);
-      delays(1000);
-      rightDistance = getDistance();
-      
-      delays(500);
-      servo.write(90);
-      delays(1000);
-      servo.write(170);
-      delays(1000); 
-      leftDistance = getDistance();
-      
-      delays(500);
-      servo.write(90);
-      delays(1000);
-      if (rightDistance > leftDistance)
-      {
-        turnRight();
-        delays(360);
-      }
-      else if (rightDistance < leftDistance)
-      {
-        turnLeft();
-        delays(360);
-      }
-      else if ((rightDistance <= 40) || (leftDistance <= 40))
-      {
-        goBackward();
-        delays(180);
-      }
-      else
-      {
-        goForward();
-      }
     }
     else
     {
-        goForward();
-    }  
-  }  
+      if (obstacleDistance >= 30)
+      {
+        goForward(LOW_CAR_SPEED);
+      }
+      else if ((obstacleDistance >= 15) && (obstacleDistance < 30))
+      {        
+        while (obstacleDistance < 40)
+        {
+          turnLeft(LOW_CAR_SPEED);
+          obstacleDistance = getDistance();
+        } 
+      }
+      else
+      {
+        while (obstacleDistance < 20)
+        {
+          goBackward(LOW_CAR_SPEED);
+          obstacleDistance = getDistance();
+        }
+      }
+    }
+  }
 }
 
 void setup(void)
